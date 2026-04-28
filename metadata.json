@@ -1,0 +1,6 @@
+{
+  "name": "NetSuite To Payment Processor V2",
+  "description": "A powerful tool to reconcile transaction data between Sigma and NetSuite Excel exports with custom column mapping and export capabilities.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
