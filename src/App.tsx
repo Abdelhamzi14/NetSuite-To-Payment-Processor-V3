@@ -213,6 +213,24 @@ export default function App() {
   const [summary, setSummary] = useState<ReconciliationSummary | null>(null);
   const [dateGenerated, setDateGenerated] = useState<string | null>(null);
 
+  const isGarbageRow = (row: any, columns: string[]) => {
+    if (!row || typeof row !== 'object') return true;
+    
+    // Check if the row has any real data
+    const values = Object.values(row).filter(v => v !== null && v !== undefined && v !== "");
+    if (values.length < 2) return true; // Most transaction rows have at least an ID and an Amount
+
+    // Check for "Total", "Grand Total", "Subtotal" etc in any column
+    const stringValues = values.map(v => String(v).toLowerCase().trim());
+    const garbageKeywords = ["total", "grand total", "subtotal", "summary", "overall total", "page total"];
+    
+    if (stringValues.some(v => garbageKeywords.includes(v) || garbageKeywords.some(kw => v.startsWith(kw + " ")))) {
+      return true;
+    }
+
+    return false;
+  };
+
   const handleFilesUpload = async (type: 'sigma' | 'netsuite', files: FileList | File[]) => {
     if (type === 'sigma') setSigmaLoading(true);
     else setNetsuiteLoading(true);
@@ -240,28 +258,26 @@ export default function App() {
         const sheetName = workbook.SheetNames[0];
         const sheet = workbook.Sheets[sheetName];
         
-        // Use raw: true to get numeric values directly when available, avoiding formatting issues
-        const data = xlsx.utils.sheet_to_json(sheet, { defval: "", raw: true });
+        // Use raw: true to get numeric values directly when available
+        const rawRows = xlsx.utils.sheet_to_json(sheet, { defval: "", raw: true }) as any[];
         
-        const filteredData = data.filter((row: any) => {
-          const values = Object.values(row).map(v => String(v).toLowerCase().trim());
-          if (values.length === 0) return false;
-          
-          // More precise total row detection:
-          // Often total rows have words like 'total' or 'summary' in a cell, but are NOT the primary data.
-          // We also filter out rows that have fewer than 2 non-empty values as they are usually noise.
-          const nonEmptyValues = Object.values(row).filter(v => v !== null && v !== undefined && v !== "");
-          if (nonEmptyValues.length < 2) return false;
+        // Identify all columns first to help with garbage detection
+        const sheetColumns = new Set<string>();
+        rawRows.forEach(row => Object.keys(row).forEach(k => sheetColumns.add(k)));
+        const columnsArr = Array.from(sheetColumns);
 
-          return !values.some(v => 
-            v === "total" || 
-            v === "grand total" || 
-            v === "overall total" || 
-            v === "subtotal" ||
-            v.startsWith("total ") ||
-            v.startsWith("summary")
-          );
-        });
+        const filteredData = rawRows.filter((row: any) => !isGarbageRow(row, columnsArr))
+          .map((row: any) => {
+            // Prune unused data: remove empty strings/nulls to save memory
+            const prunedRow: any = {};
+            Object.keys(row).forEach(key => {
+              const val = row[key];
+              if (val !== "" && val !== null && val !== undefined) {
+                prunedRow[key] = val;
+              }
+            });
+            return prunedRow;
+          });
 
         for (const row of filteredData) {
           allCombinedData.push(row);
@@ -359,30 +375,27 @@ export default function App() {
           setSigmaColumns([]);
         } else {
           // Re-process remaining files to get combined data
-          // For simplicity, we could also store data per file in a map, but re-processing is safer for memory consistency
-          // However, for UX we might just want to clear everything or support individual removal.
-          // Let's implement full re-processing for removal.
           const combinedData: any[] = [];
           for (const file of newFiles) {
             const buffer = await file.arrayBuffer();
             const workbook = xlsx.read(buffer, { type: "array", cellDates: true, dense: true });
-            const data = xlsx.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: "", raw: true });
-            const filteredData = data.filter((row: any) => {
-              const values = Object.values(row).map(v => String(v).toLowerCase().trim());
-              if (values.length === 0) return false;
-              
-              const nonEmptyValues = Object.values(row).filter(v => v !== null && v !== undefined && v !== "");
-              if (nonEmptyValues.length < 2) return false;
+            const rawRows = xlsx.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: "", raw: true }) as any[];
+            
+            const sheetColumns = new Set<string>();
+            rawRows.forEach(row => Object.keys(row).forEach(k => sheetColumns.add(k)));
+            const columnsArr = Array.from(sheetColumns);
 
-              return !values.some(v => 
-                v === "total" || 
-                v === "grand total" || 
-                v === "overall total" || 
-                v === "subtotal" ||
-                v.startsWith("total ") ||
-                v.startsWith("summary")
-              );
-            });
+            const filteredData = rawRows.filter((row: any) => !isGarbageRow(row, columnsArr))
+              .map((row: any) => {
+                const prunedRow: any = {};
+                Object.keys(row).forEach(key => {
+                  const val = row[key];
+                  if (val !== "" && val !== null && val !== undefined) {
+                    prunedRow[key] = val;
+                  }
+                });
+                return prunedRow;
+              });
             for (const row of filteredData) {
               combinedData.push(row);
             }
@@ -416,23 +429,23 @@ export default function App() {
           for (const file of newFiles) {
             const buffer = await file.arrayBuffer();
             const workbook = xlsx.read(buffer, { type: "array", cellDates: true, dense: true });
-            const data = xlsx.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: "", raw: true });
-            const filteredData = data.filter((row: any) => {
-              const values = Object.values(row).map(v => String(v).toLowerCase().trim());
-              if (values.length === 0) return false;
-              
-              const nonEmptyValues = Object.values(row).filter(v => v !== null && v !== undefined && v !== "");
-              if (nonEmptyValues.length < 2) return false;
+            const rawRows = xlsx.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: "", raw: true }) as any[];
+            
+            const sheetColumns = new Set<string>();
+            rawRows.forEach(row => Object.keys(row).forEach(k => sheetColumns.add(k)));
+            const columnsArr = Array.from(sheetColumns);
 
-              return !values.some(v => 
-                v === "total" || 
-                v === "grand total" || 
-                v === "overall total" || 
-                v === "subtotal" ||
-                v.startsWith("total ") ||
-                v.startsWith("summary")
-              );
-            });
+            const filteredData = rawRows.filter((row: any) => !isGarbageRow(row, columnsArr))
+              .map((row: any) => {
+                const prunedRow: any = {};
+                Object.keys(row).forEach(key => {
+                  const val = row[key];
+                  if (val !== "" && val !== null && val !== undefined) {
+                    prunedRow[key] = val;
+                  }
+                });
+                return prunedRow;
+              });
             for (const row of filteredData) {
               combinedData.push(row);
             }
@@ -476,9 +489,12 @@ export default function App() {
       const amount = parseAmount(getRowValue(row, amountCol));
       
       if (!id || id === "" || id.toLowerCase() === "null" || id.toLowerCase() === "undefined") {
-        // For rows without ID, we don't aggregate them to avoid losing data
+        // Only keep rows without ID if they have a non-zero amount (could be valid transactions with missing IDs)
+        // Otherwise, skip them as garbage
+        if (Math.abs(amount) < 0.001) return;
+
         const uniqueKey = `EMPTY_ID_${Math.random().toString(36).substring(7)}`;
-        map.set(uniqueKey, { row: { ...row }, count: 1, extraData: {} });
+        map.set(uniqueKey, { row: { ...row, [amountCol]: amount }, count: 1, extraData: {} });
         return;
       }
 
@@ -870,9 +886,13 @@ export default function App() {
         }
 
         matched.forEach((r: any) => {
+          const sigmaCount = r.sigma_count || 1;
+          const nsCount = r.netsuite_count || 1;
+          const isDuplicate = sigmaCount > 1 || nsCount > 1;
+
           const row = matchedSheet.addRow({
             id: r.transaction_id,
-            status: r.status,
+            status: isDuplicate ? "Duplicate" : r.status,
             date: r.sigma_date !== "N/A" ? r.sigma_date : r.netsuite_date,
             amount: r.sigma_amount,
             variance: r.variance || 0,
@@ -881,17 +901,21 @@ export default function App() {
             card_type: r.card_type,
             account: r.account,
             doc_num: r.document_number,
-            sigma_count: r.sigma_count || 1,
-            ns_count: r.netsuite_count || 1
+            sigma_count: sigmaCount,
+            ns_count: nsCount
           });
           
-          // Highlight columns A to L (1 to 12) in light green
+          // Highlight columns A to L (1 to 12)
           for (let i = 1; i <= 12; i++) {
             const cell = row.getCell(i);
-            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFCCFFCC' } };
+            if (isDuplicate) {
+              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFF9F00' } }; // Golden Orange for duplicates
+            } else {
+              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFCCFFCC' } }; // Light Green for matched
+            }
             
-            // Make Variance Column Bold (Column E / 5)
-            if (i === 5) {
+            // Make Status Column Bold (Column B / 2), Variance Column Bold (Column E / 5) & Account Type Column Bold (Column G / 7)
+            if (i === 2 || i === 5 || i === 7) {
               cell.font = { ...cell.font, bold: true };
             }
           }
@@ -932,9 +956,13 @@ export default function App() {
       }
       
       unmatched.forEach((r: any) => {
+        const sigmaCount = r.sigma_count || (r.sigma_amount !== 0 ? 1 : 0);
+        const nsCount = r.netsuite_count || (r.netsuite_amount !== 0 ? 1 : 0);
+        const isDuplicate = sigmaCount > 1 || nsCount > 1;
+
         const row = unmatchedSheet.addRow({
           id: r.transaction_id,
-          status: r.status,
+          status: isDuplicate ? "Duplicate" : r.status,
           sigma_date: r.sigma_date,
           netsuite_date: r.netsuite_date,
           sigma_amount: r.sigma_amount,
@@ -945,28 +973,31 @@ export default function App() {
           card_type: r.card_type,
           account: r.account,
           doc_num: r.document_number,
-          sigma_count: r.sigma_count || (r.sigma_amount !== 0 ? 1 : 0),
-          ns_count: r.netsuite_count || (r.netsuite_amount !== 0 ? 1 : 0)
+          sigma_count: sigmaCount,
+          ns_count: nsCount
         });
 
         // Highlight columns A to N (1 to 14)
         for (let i = 1; i <= 14; i++) {
           const cell = row.getCell(i);
           
-          // Color coding based on status
-          if (r.status === "Missing in NetSuite") {
-            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFE4E4' } }; // Light Red
-          } else if (r.status === "Missing in Sigma") {
-            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE4F0FF' } }; // Light Blue
-          } else if (r.status === "Mismatched") {
-            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } }; // Yellow as requested
+          if (isDuplicate) {
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFF9F00' } }; // Golden Orange for duplicates
           } else {
-            // Default highlight if requested? User said "Highlight columns and headers only from A to K"
-            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F0F0' } }; 
+            // Color coding based on status
+            if (r.status === "Missing in NetSuite") {
+              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFE4E4' } }; // Light Red
+            } else if (r.status === "Missing in Sigma") {
+              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE4F0FF' } }; // Light Blue
+            } else if (r.status === "Mismatched") {
+              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } }; // Yellow
+            } else {
+              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F0F0' } }; 
+            }
           }
           
-          // Make Variance Column Bold (Column G / 7)
-          if (i === 7) {
+          // Make Status (Col B / 2), Variance (Col G / 7), and Account Type (Col I / 9) Column Bold
+          if (i === 2 || i === 7 || i === 9) {
             cell.font = { ...cell.font, bold: true };
           }
         }
@@ -1551,7 +1582,9 @@ export default function App() {
                         ) : null}
                       </div>
                       <div className="flex items-center">
-                        {row.status === 'Matched' ? (
+                        {(row.sigma_count && row.sigma_count > 1) || (row.netsuite_count && row.netsuite_count > 1) ? (
+                          <span className="bg-orange-100 text-orange-700 px-1 rounded group-hover:bg-orange-500 group-hover:text-white font-semibold">Duplicate</span>
+                        ) : row.status === 'Matched' ? (
                           <span className="bg-emerald-100 text-emerald-700 px-1 rounded group-hover:bg-emerald-500 group-hover:text-white">Matched</span>
                         ) : row.status === 'Mismatched' ? (
                           <span className="bg-amber-100 text-amber-700 px-1 rounded group-hover:bg-amber-500 group-hover:text-white">Mismatched</span>
