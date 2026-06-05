@@ -668,7 +668,7 @@ export default function App() {
             usedNetsuiteIndices.add(nsMatchIndex);
 
             const isDuplicate = sigmaCount > 1 || nsCount > 1;
-            const duplicateInfo = isDuplicate ? ` (Grouped: ${sigmaCount} Sigma items vs ${nsCount} NS items)` : "";
+            const duplicateInfo = isDuplicate ? ` (Grouped: ${sigmaCount} Payment Processor items vs ${nsCount} NS items)` : "";
 
             if (Math.abs(variance) < 0.01) {
                 matchedCount++;
@@ -698,7 +698,7 @@ export default function App() {
                 netsuite_amount: nsAmount,
                 status: "Mismatched",
                 variance: variance,
-                explanation: `${matchMethod} found, but amount discrepancy: Sigma ($${sigmaAmount.toFixed(2)}) vs NetSuite ($${nsAmount.toFixed(2)})${duplicateInfo}`,
+                explanation: `${matchMethod} found, but amount discrepancy: Payment Processor ($${sigmaAmount.toFixed(2)}) vs NetSuite ($${nsAmount.toFixed(2)})${duplicateInfo}`,
                 account_type: getRowValue(nsMatch, netsuiteMapping.account_type!) || getRowValue(sigmaRow, sigmaMapping.account_type!) || "N/A",
                 card_type: getRowValue(nsMatch, netsuiteMapping.card_type!) || getRowValue(sigmaRow, sigmaMapping.card_type!) || "N/A",
                 document_number: getRowValue(nsMatch, netsuiteMapping.document_number!) || "N/A",
@@ -719,7 +719,7 @@ export default function App() {
               netsuite_amount: 0,
               status: "Missing in NetSuite",
               variance: sigmaAmount,
-              explanation: `Transaction ID found in Sigma but missing in NetSuite${sigmaCount > 1 ? ` (Grouped: ${sigmaCount} items)` : ""}`,
+              explanation: `Transaction ID found in Payment Processor but missing in NetSuite${sigmaCount > 1 ? ` (Grouped: ${sigmaCount} items)` : ""}`,
               account_type: getRowValue(sigmaRow, sigmaMapping.account_type!) || "N/A",
               card_type: getRowValue(sigmaRow, sigmaMapping.card_type!) || "N/A",
               document_number: "N/A",
@@ -744,9 +744,9 @@ export default function App() {
               transaction_id: nsId.startsWith("EMPTY_ID_") ? "N/A (No ID)" : nsId,
               sigma_amount: 0,
               netsuite_amount: nsAmount,
-              status: "Missing in Sigma",
+              status: "Missing in Payment Processor",
               variance: -nsAmount,
-              explanation: `Transaction ID found in NetSuite but missing in Sigma${nsCount > 1 ? ` (Grouped: ${nsCount} items)` : ""}`,
+              explanation: `Transaction ID found in NetSuite but missing in Payment Processor${nsCount > 1 ? ` (Grouped: ${nsCount} items)` : ""}`,
               account_type: getRowValue(nsRow, netsuiteMapping.account_type!) || "N/A",
               card_type: getRowValue(nsRow, netsuiteMapping.card_type!) || "N/A",
               document_number: getRowValue(nsRow, netsuiteMapping.document_number!) || "N/A",
@@ -796,6 +796,56 @@ export default function App() {
       const matched = sortedResults.filter((r: any) => r.status === "Matched");
       const unmatched = sortedResults.filter((r: any) => r.status !== "Matched");
 
+      // Group/Sort matched items by color/category:
+      // 1. Duplicates (Golden Orange)
+      // 2. Normal Matched (Light Green)
+      const sortedMatched = [...matched].sort((a, b) => {
+        const aSigCount = a.sigma_count || 1;
+        const aNsCount = a.netsuite_count || 1;
+        const bSigCount = b.sigma_count || 1;
+        const bNsCount = b.netsuite_count || 1;
+        const aIsDup = aSigCount > 1 || aNsCount > 1;
+        const bIsDup = bSigCount > 1 || bNsCount > 1;
+
+        if (aIsDup && !bIsDup) return -1;
+        if (!aIsDup && bIsDup) return 1;
+
+        // Secondary sort: alphabet on ID
+        const idA = String(a.transaction_id || "");
+        const idB = String(b.transaction_id || "");
+        return idA.localeCompare(idB);
+      });
+
+      // Group/Sort unmatched items by color/category:
+      // 1. Duplicates (Golden Orange)
+      // 2. Mismatched (Yellow)
+      // 3. Missing in NetSuite (Light Red)
+      // 4. Missing in Payment Processor (Light Blue)
+      // 5. Normal/Other (Light Gray)
+      const getUnmatchedColorPriority = (r: any) => {
+        const sigmaCount = r.sigma_count || (r.sigma_amount !== 0 ? 1 : 0);
+        const nsCount = r.netsuite_count || (r.netsuite_amount !== 0 ? 1 : 0);
+        const isDuplicate = sigmaCount > 1 || nsCount > 1;
+
+        if (isDuplicate) return 1; // Golden Orange
+        if (r.status === "Mismatched") return 2; // Yellow
+        if (r.status === "Missing in NetSuite") return 3; // Light Red
+        if (r.status === "Missing in Payment Processor") return 4; // Light Blue
+        return 5; // Light Gray
+      };
+
+      const sortedUnmatched = [...unmatched].sort((a, b) => {
+        const priorityA = getUnmatchedColorPriority(a);
+        const priorityB = getUnmatchedColorPriority(b);
+        if (priorityA !== priorityB) {
+          return priorityA - priorityB;
+        }
+        // Secondary sort: alphabet on ID
+        const idA = String(a.transaction_id || "");
+        const idB = String(b.transaction_id || "");
+        return idA.localeCompare(idB);
+      });
+
       const workbook = new ExcelJS.Workbook();
       
       // 1. Summary Sheet
@@ -815,13 +865,13 @@ export default function App() {
       const summaryData = [
         ["Date Generated", new Date().toLocaleString()],
         ["Total Transactions Uploaded", summary.totalTransactionsUploaded],
-        ["Sigma Total Upload", parseFloat(summary.sigmaTotalUpload)],
+        ["Payment Processor Total Upload", parseFloat(summary.sigmaTotalUpload)],
         ["NetSuite Total Upload", parseFloat(summary.netsuiteTotalUpload)],
         ["Match Rate", parseFloat(summary.matchRate) / 100],
         ["Matched Items Count", summary.matchedCount],
         ["Mismatched Items Count", summary.mismatchedCount],
         ["Missing in NetSuite Count", summary.missingInNetsuiteCount],
-        ["Missing in Sigma Count", summary.missingInSigmaCount],
+        ["Missing in Payment Processor Count", summary.missingInSigmaCount],
         ["Total Unmatched Items", summary.totalUnmatchedItems],
         ["Total Variance Amount", { formula: `SUM('Unmatched Items'!G2:G${unmatched.length + 1})` }]
       ];
@@ -840,7 +890,7 @@ export default function App() {
         // Formatting based on row type
         if (row[0] === "Match Rate") {
           valueCell.numFmt = '0.00%';
-        } else if (row[0] === "Sigma Total Upload" || row[0] === "NetSuite Total Upload" || row[0] === "Total Variance Amount") {
+        } else if (row[0] === "Payment Processor Total Upload" || row[0] === "NetSuite Total Upload" || row[0] === "Total Variance Amount") {
           valueCell.numFmt = '"$"#,##0.00';
         } else if (typeof row[1] === 'number') {
           valueCell.numFmt = '#,##0';
@@ -872,7 +922,7 @@ export default function App() {
           { header: "Card Type", key: "card_type", width: 20 },
           { header: "Account", key: "account", width: 20 },
           { header: "Document Number", key: "doc_num", width: 20 },
-          { header: "Sigma Count", key: "sigma_count", width: 15 },
+          { header: "Payment Processor Count", key: "sigma_count", width: 15 },
           { header: "NS Count", key: "ns_count", width: 15 }
         ];
 
@@ -885,7 +935,7 @@ export default function App() {
           cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
         }
 
-        matched.forEach((r: any) => {
+        sortedMatched.forEach((r: any) => {
           const sigmaCount = r.sigma_count || 1;
           const nsCount = r.netsuite_count || 1;
           const isDuplicate = sigmaCount > 1 || nsCount > 1;
@@ -931,9 +981,9 @@ export default function App() {
       unmatchedSheet.columns = [
         { header: "Transaction ID", key: "id", width: 25 },
         { header: "Status", key: "status", width: 20 },
-        { header: "Sigma Date", key: "sigma_date", width: 15 },
+        { header: "Payment Processor Date", key: "sigma_date", width: 15 },
         { header: "NetSuite Date", key: "netsuite_date", width: 15 },
-        { header: "Sigma Amount", key: "sigma_amount", width: 15 },
+        { header: "Payment Processor Amount", key: "sigma_amount", width: 15 },
         { header: "NetSuite Amount", key: "netsuite_amount", width: 15 },
         { header: "Variance", key: "variance", width: 15 },
         { header: "Explanation", key: "explanation", width: 40 },
@@ -941,7 +991,7 @@ export default function App() {
         { header: "Card Type", key: "card_type", width: 20 },
         { header: "Account", key: "account", width: 20 },
         { header: "Document Number", key: "doc_num", width: 20 },
-        { header: "Sigma Count", key: "sigma_count", width: 15 },
+        { header: "Payment Processor Count", key: "sigma_count", width: 15 },
         { header: "NS Count", key: "ns_count", width: 15 }
       ];
 
@@ -955,7 +1005,7 @@ export default function App() {
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF141414' } };
       }
       
-      unmatched.forEach((r: any) => {
+      sortedUnmatched.forEach((r: any) => {
         const sigmaCount = r.sigma_count || (r.sigma_amount !== 0 ? 1 : 0);
         const nsCount = r.netsuite_count || (r.netsuite_amount !== 0 ? 1 : 0);
         const isDuplicate = sigmaCount > 1 || nsCount > 1;
@@ -987,7 +1037,7 @@ export default function App() {
             // Color coding based on status
             if (r.status === "Missing in NetSuite") {
               cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFE4E4' } }; // Light Red
-            } else if (r.status === "Missing in Sigma") {
+            } else if (r.status === "Missing in Payment Processor") {
               cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE4F0FF' } }; // Light Blue
             } else if (r.status === "Mismatched") {
               cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } }; // Yellow
@@ -1105,17 +1155,17 @@ export default function App() {
                 <div className="w-16 h-16 rounded-full bg-[#141414] text-[#E4E3E0] flex items-center justify-center mb-6">
                   <FileSpreadsheet size={32} />
                 </div>
-                <h3 className="font-serif italic text-xl mb-2">Sigma Import</h3>
-                <p className="text-xs opacity-60 mb-6 max-w-xs">Upload your primary transaction data file from Sigma. Usually contains raw transaction logs.</p>
+                <h3 className="font-serif italic text-xl mb-2">Payment Processor Import</h3>
+                <p className="text-xs opacity-60 mb-6 max-w-xs">Upload your primary transaction data file from Payment Processor. Usually contains raw transaction logs.</p>
                 
                 {sigmaLoading ? (
                   <div className="flex items-center gap-2 text-[#141414] font-mono text-xs bg-white/80 px-4 py-2 rounded-full border border-[#141414]/20">
-                    <RefreshCw size={14} className="animate-spin" /> Processing Sigma...
+                    <RefreshCw size={14} className="animate-spin" /> Processing Payment Processor...
                   </div>
                 ) : (
                   <div className="w-full space-y-4 flex flex-col items-center">
                     <label className="cursor-pointer px-8 py-3 bg-[#141414] text-[#E4E3E0] rounded-full text-xs uppercase tracking-widest hover:opacity-90 transition-opacity flex items-center gap-2">
-                      <Upload size={14} /> Add Sigma Files
+                      <Upload size={14} /> Add Payment Processor Files
                       <input type="file" className="hidden" accept=".xlsx,.xls,.csv" multiple onChange={(e) => e.target.files && handleFilesUpload('sigma', e.target.files)} />
                     </label>
 
@@ -1167,7 +1217,7 @@ export default function App() {
                   <TableIcon size={32} />
                 </div>
                 <h3 className="font-serif italic text-xl mb-2">NetSuite Import</h3>
-                <p className="text-xs opacity-60 mb-6 max-w-xs">Upload corresponding NetSuite files. We'll match this against your Sigma data.</p>
+                <p className="text-xs opacity-60 mb-6 max-w-xs">Upload corresponding NetSuite files. We'll match this against your Payment Processor data.</p>
                 
                 {netsuiteLoading ? (
                   <div className="flex items-center gap-2 text-[#141414] font-mono text-xs bg-white/80 px-4 py-2 rounded-full border border-[#141414]/20">
@@ -1248,7 +1298,7 @@ export default function App() {
                 <div className="border border-[#141414] p-6 rounded-2xl bg-white/30">
                   <div className="flex items-center gap-2 mb-6">
                     <Settings2 size={18} />
-                    <h3 className="font-serif italic text-lg">Sigma Column Mapping</h3>
+                    <h3 className="font-serif italic text-lg">Payment Processor Column Mapping</h3>
                   </div>
                   <div className="space-y-4">
                     <div>
@@ -1434,7 +1484,7 @@ export default function App() {
                 </h2>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-[11px] uppercase tracking-widest">
                   <div className="flex flex-col gap-1">
-                    <span className="opacity-50">Sigma File</span>
+                    <span className="opacity-50">Payment Processor File</span>
                     <span className="font-bold">{sigmaFiles.map(f => f.name).join(', ')}</span>
                     {summary && <span className="mt-1 font-mono text-[10px] text-[#141414]/70">Total: ${formatAmount(summary.sigmaTotalUpload)}</span>}
                   </div>
@@ -1461,7 +1511,7 @@ export default function App() {
                     </div>
                     <div className="border border-[#141414] p-4 rounded-2xl bg-emerald-50 border-emerald-200">
                       <p className="text-[10px] uppercase tracking-widest text-emerald-700 mb-1">Matched</p>
-                      <p className="text-xl font-serif italic text-emerald-900">{formatInteger(summary.matchedCount)}</p>
+                      <p className="text-xl font-serif italic text-emerald-950">{formatInteger(summary.matchedCount)}</p>
                     </div>
                     <div className="border border-[#141414] p-4 rounded-2xl bg-amber-50 border-amber-200">
                       <p className="text-[10px] uppercase tracking-widest text-amber-700 mb-1">Mismatched</p>
@@ -1472,7 +1522,7 @@ export default function App() {
                       <p className="text-xl font-serif italic text-rose-900">{formatInteger(summary.missingInNetsuiteCount)}</p>
                     </div>
                     <div className="border border-[#141414] p-4 rounded-2xl bg-blue-50 border-blue-200">
-                      <p className="text-[10px] uppercase tracking-widest text-blue-700 mb-1">Missing in Sigma</p>
+                      <p className="text-[10px] uppercase tracking-widest text-blue-700 mb-1">Missing in Payment Processor</p>
                       <p className="text-xl font-serif italic text-blue-900">{formatInteger(summary.missingInSigmaCount)}</p>
                     </div>
                   </div>
@@ -1495,7 +1545,7 @@ export default function App() {
                   <div className="grid grid-cols-2 gap-4">
                     <div className="border border-[#141414] p-4 rounded-2xl bg-white/50 flex justify-between items-center">
                       <div>
-                        <p className="text-[10px] uppercase tracking-widest opacity-50 mb-1">Sigma Total Upload</p>
+                        <p className="text-[10px] uppercase tracking-widest opacity-50 mb-1">Payment Processor Total Upload</p>
                         <p className="text-xl font-serif italic">${formatAmount(summary.sigmaTotalUpload)}</p>
                       </div>
                       <div className="w-px h-10 bg-[#141414]/10 mx-4" />
@@ -1559,9 +1609,9 @@ export default function App() {
                 <div className="grid grid-cols-12 p-4 border-b border-[#141414] bg-[#141414] text-[#E4E3E0] text-[9px] uppercase tracking-widest font-bold">
                   <div>Transaction ID</div>
                   <div>Status</div>
-                  <div>Sigma Date</div>
+                  <div>PP Date</div>
                   <div>NS Date</div>
-                  <div>Sigma Amt</div>
+                  <div>PP Amt</div>
                   <div>NS Amt</div>
                   <div>Variance</div>
                   <div>Type</div>
@@ -1577,7 +1627,7 @@ export default function App() {
                         <span className="truncate">{row.transaction_id}</span>
                         {(row.sigma_count && row.sigma_count > 1) || (row.netsuite_count && row.netsuite_count > 1) ? (
                           <span className="text-[8px] text-amber-600 group-hover:text-amber-400 font-bold uppercase">
-                            Grouped ({row.sigma_count || 1}S / {row.netsuite_count || 1}N)
+                            Grouped ({row.sigma_count || 1}PP / {row.netsuite_count || 1}N)
                           </span>
                         ) : null}
                       </div>
@@ -1588,7 +1638,7 @@ export default function App() {
                           <span className="bg-emerald-100 text-emerald-700 px-1 rounded group-hover:bg-emerald-500 group-hover:text-white">Matched</span>
                         ) : row.status === 'Mismatched' ? (
                           <span className="bg-amber-100 text-amber-700 px-1 rounded group-hover:bg-amber-500 group-hover:text-white">Mismatched</span>
-                        ) : row.status === 'Missing in Sigma' ? (
+                        ) : row.status === 'Missing in Payment Processor' ? (
                           <span className="bg-blue-100 text-blue-700 px-1 rounded group-hover:bg-blue-500 group-hover:text-white">Missing</span>
                         ) : (
                           <span className="bg-rose-100 text-rose-700 px-1 rounded group-hover:bg-rose-500 group-hover:text-white">Missing</span>
